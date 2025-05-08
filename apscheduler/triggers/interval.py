@@ -52,6 +52,10 @@ class IntervalTrigger(BaseTrigger):
     def get_next_fire_time(self, previous_fire_time, now):
         if previous_fire_time:
             next_fire_time = previous_fire_time + self.interval
+            if previous_fire_time < now:
+                delta = now - previous_fire_time
+                if delta > self.interval:
+                    next_fire_time = now + timedelta(microseconds=1)
         elif self.start_date > now:
             next_fire_time = self.start_date
         else:

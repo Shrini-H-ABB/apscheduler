@@ -85,6 +85,7 @@ class BaseScheduler(six.with_metaclass(ABCMeta)):
         self._pending_jobs = []
         self.state = STATE_STOPPED
         self.configure(gconfig, **options)
+        self._previous_now = datetime.now(self.timezone)
 
     def configure(self, gconfig={}, prefix='apscheduler.', **options):
         """
@@ -944,6 +945,18 @@ class BaseScheduler(six.with_metaclass(ABCMeta)):
 
         with self._jobstores_lock:
             for jobstore_alias, jobstore in six.iteritems(self._jobstores):
+                if now < self._previous_now:
+                    self._logger.warning('detected time roll back from %s to %s', self._previous_now, now)
+                    for job in jobstore.get_all_jobs():
+                        next_run_time =job.trigger.get_next_fire_time(None, now)
+                        job._modify(next_run_time=next_run_time)
+                        jobstore.update_job(job)
+                        self._dispatch_event(JobEvent(EVENT_JOB_MODIFIED, job.id, jobstore))
+                    # Wake up the scheduler since the job's next run time may have been changed
+                    if self.state == STATE_RUNNING:
+                        self.wakeup()
+                    next_wakeup_time = now + timedelta(seconds=1)
+                    continue
                 try:
                     due_jobs = jobstore.get_due_jobs(now)
                 except Exception as e:
@@ -1002,6 +1015,8 @@ class BaseScheduler(six.with_metaclass(ABCMeta)):
                 if jobstore_next_run_time and (next_wakeup_time is None or
                                                jobstore_next_run_time < next_wakeup_time):
                     next_wakeup_time = jobstore_next_run_time.astimezone(self.timezone)
+
+            self._previous_now = now
 
         # Dispatch collected events
         for event in events:
